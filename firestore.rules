@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function me() { return request.auth.token.email.lower(); }
+    // HR emails (lowercase). Keep in sync with HR_EMAILS in index.html
+    function isHR() { return signedIn() && me() in ['hr@sedcenergy.com']; }
+    function isStaff() { return signedIn() && exists(/databases/$(database)/documents/approved/$(me())); }
+
+    // Approved staff list: HR manages it; each person can check their own entry
+    match /approved/{email} {
+      allow get: if signedIn() && me() == email;
+      allow list, write: if isHR();
+    }
+
+    // Leave applications
+    match /requests/{id} {
+      allow create: if (isStaff() || isHR())
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'Pending';
+      allow get, list: if isHR() || (isStaff() && resource.data.uid == request.auth.uid);
+      allow update: if isHR()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'statusAt', 'history']);
+      allow delete: if false;
+    }
+  }
+}
